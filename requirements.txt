@@ -1,0 +1,7 @@
+# Exact versions tested with Python 3.11.
+opencv-python==4.10.0.84
+dlib==19.24.6
+imutils==0.5.4
+pygame==2.6.1
+scipy==1.14.1
+numpy==1.26.4
