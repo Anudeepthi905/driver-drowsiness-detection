@@ -2,34 +2,40 @@
 
 A real-time system built with OpenCV and Dlib. It tracks the driver's eyes from live webcam video and sounds an alarm when the eyes stay closed for more than a set number of frames. The alarm stops as soon as the eyes reopen.
 
+![Demo: eyes open, eyes closed past the threshold, alert banner, eyes open again](docs/demo.gif)
+
+*The overlay shows the face box, the 12 eye landmarks, the live Eye Aspect Ratio (EAR), the closed-frame counter, and the alert banner. The demo GIF has no sound; the real program also sounds an alarm.*
+
 ## How it works
 
-1. **Capture:** a webcam frame is read and resized so detection is fast.
-2. **Detect:** Dlib finds the face and places 68 facial landmarks on it.
-3. **Measure:** the Eye Aspect Ratio (EAR) is computed for each eye from its 6 landmarks.
-4. **Classify:** if the average EAR is below `EAR_THRESHOLD`, the eyes are treated as closed.
-5. **Count:** a counter tracks how many frames in a row the eyes have been closed.
-6. **Alert:** once the counter reaches `CONSEC_FRAMES_LIMIT`, the alarm loops until the eyes open.
-
-The math behind EAR, the blink-versus-drowsiness logic, and testing guidance are in [docs/report_notes.md](docs/report_notes.md).
-
-## Project structure
-
 ```
-Driver Drowsiness Detection/
-├── drowsiness_detector.py   # main script (all detection and alarm logic)
-├── requirements.txt         # exact Python dependencies
-├── models/                  # put shape_predictor_68_face_landmarks.dat here (not committed)
-├── sounds/alarm.wav         # alarm sound
-├── docs/report_notes.md     # explanation for the report and testing guidance
-└── README.md
+webcam frame → face detection → 68 facial landmarks → eye aspect ratio → closed-frame counter → alarm
 ```
+
+1. **Face detection.** Dlib's HOG + linear SVM detector finds the face in each frame. It runs on a reduced 400 px copy of the frame because detection is the slowest step.
+2. **68 landmarks.** Dlib's shape predictor places 68 points on the face. Six of them outline each eye.
+3. **Eye aspect ratio (EAR).** For each eye, with corners p1 and p4, upper-lid points p2 and p3, and lower-lid points p6 and p5:
+
+   $$\text{EAR} = \frac{\lVert p_2 - p_6 \rVert + \lVert p_3 - p_5 \rVert}{2\,\lVert p_1 - p_4 \rVert}$$
+
+   This is eye height divided by eye width. It stays around 0.25–0.35 when the eye is open and drops towards 0.05–0.15 when the eyelids close, because the height shrinks while the width stays the same. Since it is a ratio, it doesn't change when you move closer to or further from the camera. The two eyes are averaged.
+4. **Closed-frame counter.** A frame counts as "closed" when the EAR is below `EAR_THRESHOLD` (0.25). The counter goes up by 1 for every closed frame in a row, and any open frame resets it to 0.
+5. **Alarm.** When the counter reaches `CONSEC_FRAMES_LIMIT` (48 frames, about 2 seconds), a looping alarm sounds and a red banner appears. Both stop on the first open-eye frame.
+
+**Why a frame threshold instead of reacting to a single closed frame?** People blink 15–20 times a minute. Each blink lasts about 100–400 ms, which is only 3–10 frames on a webcam. Reacting to every low-EAR frame would sound the alarm on every blink. With a 48-frame threshold, a blink resets the counter long before it reaches the limit. Only a sustained closure, the sign of drowsiness, gets there. The same rule ignores one-off landmark glitches from a single bad frame.
+
+Full derivation, testing and calibration notes: [docs/report_notes.md](docs/report_notes.md).
+
+## Requirements
+
+- Python 3.11
+- A webcam
+- Python packages, pinned in [requirements.txt](requirements.txt): `opencv-python 4.10.0.84`, `dlib 19.24.6`, `imutils 0.5.4`, `pygame 2.6.1`, `scipy 1.14.1`, `numpy 1.26.4`
+- Optional, only for making the demo GIF: [ffmpeg](https://ffmpeg.org/)
 
 ## Setup
 
-You need Python 3.11 and a webcam.
-
-### 1. Install dependencies
+### 1. Install the dependencies
 
 ```bash
 python -m venv venv
@@ -38,46 +44,36 @@ venv\Scripts\activate          # Windows
 pip install -r requirements.txt
 ```
 
-**About dlib:** pip compiles dlib from source, which needs [CMake](https://cmake.org/download/) and a C++ compiler (on Windows, "Visual Studio Build Tools" with the "Desktop development with C++" workload). If the install fails, the easiest route on Windows is Anaconda:
+**About dlib:** pip compiles dlib from source, which needs [CMake](https://cmake.org/download/) and a C++ compiler. On Windows that compiler is "Visual Studio Build Tools" with the "Desktop development with C++" workload. If that's a hassle, Anaconda provides a precompiled dlib:
 
 ```bash
-conda create -n drowsy python=3.11
+conda create -n drowsy -c conda-forge --override-channels python=3.11 dlib=19.24
 conda activate drowsy
-conda install -c conda-forge dlib=19.24
 pip install opencv-python==4.10.0.84 imutils==0.5.4 pygame==2.6.1 scipy==1.14.1 numpy==1.26.4
 ```
 
-### 2. Download the landmark model
+### 2. Download the Dlib landmark model
 
-1. Download `shape_predictor_68_face_landmarks.dat.bz2` from <http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2> (about 64 MB).
-2. Extract it with 7-Zip on Windows or `bunzip2` on macOS/Linux. You get `shape_predictor_68_face_landmarks.dat` (about 100 MB).
-3. Place it here:
+```bash
+python scripts/download_model.py
+```
 
-   ```
-   models/shape_predictor_68_face_landmarks.dat
-   ```
+This downloads `shape_predictor_68_face_landmarks.dat.bz2` (about 64 MB) from [dlib.net](http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2), decompresses it, and saves it as `models/shape_predictor_68_face_landmarks.dat` (about 100 MB). Running it again does nothing if the file is already there. To do it by hand instead, download the link above, extract it with 7-Zip or `bunzip2`, and put the `.dat` file in `models/`.
 
-The script builds this path relative to its own location (`MODEL_FILE` at the top of `drowsiness_detector.py`), so it works whichever folder you run it from. If the file is missing, the program stops with a message telling you where to put it.
-
-**Why the model is not committed to Git:** the file is about 100 MB, which is right at GitHub's 100 MB hard limit for a single file and would bloat every clone. It is also freely downloadable from a stable URL. Its license is restrictive too: it was trained on the iBUG 300-W dataset, which does not allow commercial use. For these reasons `.gitignore` excludes `models/*.dat`, and each user downloads the model once.
+**The model is not committed to Git.** It is right at GitHub's 100 MB per-file limit and freely downloadable. It was also trained on the iBUG 300-W dataset, which does not allow commercial use. `.gitignore` excludes it.
 
 ## Usage
 
 ```bash
-python drowsiness_detector.py
+python drowsiness_detector.py                    # run live
+python drowsiness_detector.py --record demo.mp4  # run live and also save the overlaid video (no audio)
 ```
 
-A window shows the live video with:
-- the current **EAR** value,
-- the **eye state** (OPEN in green, CLOSED in red),
-- the **closed-frame counter** (for example `12/48`),
-- **DROWSINESS ALERT!** when the limit is reached.
+Press **`q`** in the video window to quit. The camera is released, the alarm stops, any recording is saved, and windows close.
 
-Press **`q`** in the video window to quit. The camera is released, the alarm is stopped, and windows are closed.
+### Configuration
 
-## Configuration
-
-Edit the constants at the top of `drowsiness_detector.py`:
+The constants at the top of `drowsiness_detector.py`:
 
 | Constant | Default | Effect |
 |---|---|---|
@@ -86,17 +82,68 @@ Edit the constants at the top of `drowsiness_detector.py`:
 | `CAMERA_INDEX` | `0` | Which webcam to open |
 | `ALARM_SOUND_FILE` | `sounds/alarm.wav` | Sound looped during the alarm |
 
-See [docs/report_notes.md](docs/report_notes.md#4-testing-and-calibration) for how to calibrate the threshold for your own face.
+To calibrate `EAR_THRESHOLD` for your own face and lighting, see [docs/report_notes.md](docs/report_notes.md#4-testing-and-calibration).
 
-## Error handling
+### Error handling
 
 | Situation | Behaviour |
 |---|---|
-| Model file missing | Exits with download and placement instructions |
+| Model file missing | Exits and tells you to run `scripts/download_model.py` |
 | Webcam missing or busy | Exits with troubleshooting tips |
-| Sound file missing / no audio device | Prints a warning and continues with the on-screen alert only |
-| Webcam disconnected mid-run | Stops cleanly |
+| Sound file missing / no audio device | Warns and continues with the on-screen alert only |
+| Webcam disconnected mid-run | Stops cleanly and saves any recording |
 | No face in frame | Shows "No face detected" and resets the counter |
+
+## Recording the demo
+
+1. **Record** about 12–15 seconds of yourself:
+
+   ```bash
+   python drowsiness_detector.py --record demo.mp4
+   ```
+
+   The first second is used to measure your computer's real frame rate, so the video plays back at true speed.
+2. **Convert** the best 8–10 seconds to a GIF:
+
+   ```bash
+   python scripts/make_gif.py demo.mp4 --start 1 --duration 9
+   ```
+
+   This writes `docs/demo.gif`: at most 10 s long, about 12 fps, 640 px wide and 8 MB or less. If the GIF comes out too big, the script retries with fewer colours and then a smaller width.
+
+`.mp4` files are git-ignored, so the raw recording never gets committed by accident. Only `docs/demo.gif` is.
+
+## Limitations
+
+- **Lighting.** Dim or uneven light makes landmarks jitter. The EAR then gets noisy and can cross the threshold while the eyes are open. Strong backlight (a window behind you) can stop the face from being found at all.
+- **Glasses glare.** Reflections on lenses hide the eyelids, so the eye landmarks may be placed badly. Thick frames sitting close to the eyes can have the same effect.
+- **Head turned away.** The HOG detector is trained on near-frontal faces. If the head turns more than about 30° or drops out of view, no face is found, and the counter resets instead of raising an alarm. A driver nodding off with their head slumped may therefore be missed.
+- **Frame-rate dependence.** The limit is counted in frames, so on a slower computer 48 frames takes longer in real time.
+- **One fixed threshold.** EAR differs between people. 0.25 is a starting point; calibrate it for your own face.
+
+## Ideas for improvement
+
+- **Per-user calibration:** measure the user's open-eye EAR for a few seconds at start-up and set the threshold relative to it.
+- **Time-based limit:** trigger after a number of seconds rather than frames, so behaviour is the same on any computer.
+- **Smoothing:** apply a moving average to the EAR to reduce landmark jitter.
+- **Head pose and yawning:** estimate head pitch from the landmarks to catch nodding, and add a mouth aspect ratio to detect yawns.
+- **Robustness in the dark:** use an infrared camera for night driving. A CNN face detector (Dlib's MMOD, or MediaPipe Face Mesh) handles turned heads and poor light better, at extra compute cost.
+- **Learned classifier:** replace the fixed threshold with a small model trained on a sequence of EAR values. Blink-pattern features such as PERCLOS (the share of time the eyes are closed) are standard in drowsiness research.
+
+## Project structure
+
+```
+├── drowsiness_detector.py     # main script: detection, EAR, counter, alarm, recording
+├── requirements.txt           # pinned dependencies
+├── scripts/
+│   ├── download_model.py      # fetches the Dlib landmark model into models/
+│   └── make_gif.py            # turns a recording into docs/demo.gif (needs ffmpeg)
+├── models/                    # landmark model goes here (git-ignored)
+├── sounds/alarm.wav           # alarm sound
+└── docs/
+    ├── demo.gif               # README demo
+    └── report_notes.md        # method, maths, testing and calibration notes
+```
 
 ## Reference
 

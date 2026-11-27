@@ -16,12 +16,15 @@ Pipeline for every video frame:
     6. Start the alarm when the count passes the limit; stop it when the
        eyes reopen.
 
-Run:   python drowsiness_detector.py
-Quit:  press 'q' in the video window.
+Run:     python drowsiness_detector.py
+Record:  python drowsiness_detector.py --record demo.mp4   (video only, no audio)
+Quit:    press 'q' in the video window.
 """
 
+import argparse
 import os
 import sys
+import time
 
 # Hide pygame's "Hello from the pygame community" banner (cosmetic only).
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
@@ -45,8 +48,10 @@ CONSEC_FRAMES_LIMIT = 48    # Closed frames in a row needed to trigger the alarm
 CAMERA_INDEX = 0            # Webcam to open: 0 is the built-in/default camera, try 1 or 2 for an external USB camera.
 ALARM_SOUND_FILE = os.path.join(BASE_DIR, "sounds", "alarm.wav")  # Sound looped while the alarm is active.
 
-MODEL_FILE = os.path.join(BASE_DIR, "models", "shape_predictor_68_face_landmarks.dat")  # Dlib 68-point landmark model (download separately, see README).
-FRAME_WIDTH = 450           # Frames are shrunk to this width before detection: smaller is faster, but faces far from the camera may be missed.
+MODEL_FILE = os.path.join(BASE_DIR, "models", "shape_predictor_68_face_landmarks.dat")  # Dlib 68-point landmark model (run scripts/download_model.py).
+FRAME_WIDTH = 640           # Width of the displayed (and recorded) frame; 640 px suits a README demo GIF.
+DETECT_WIDTH = 400          # Face detection runs on a copy shrunk to this width: smaller is faster, but faces far from the camera may be missed.
+FPS_SAMPLE_FRAMES = 30      # Recording only: frames used to measure the real frame rate, so the saved video plays at true speed.
 
 # Landmark index ranges for each eye in the 68-point model
 # (left eye = points 42-47, right eye = points 36-41, from the subject's point of view).
@@ -57,6 +62,8 @@ FRAME_WIDTH = 450           # Frames are shrunk to this width before detection: 
 GREEN = (0, 255, 0)
 RED = (0, 0, 255)
 YELLOW = (0, 255, 255)
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
 
 
 # --------------------------------------------------------------------------
@@ -72,9 +79,8 @@ def load_models(model_path):
     if not os.path.isfile(model_path):
         sys.exit(
             f"[ERROR] Landmark model not found at:\n  {model_path}\n"
-            "Download shape_predictor_68_face_landmarks.dat.bz2 from\n"
-            "  http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2\n"
-            "extract it, and place the .dat file in the 'models' folder (see README)."
+            "Download it with:  python scripts/download_model.py\n"
+            "(or see the README for the manual download steps)."
         )
     detector = dlib.get_frontal_face_detector()    # HOG + linear SVM face detector (fast on a CPU)
     predictor = dlib.shape_predictor(model_path)   # Regression-tree model that places 68 landmarks
@@ -120,7 +126,7 @@ def open_camera(index):
 # --------------------------------------------------------------------------
 
 def capture_frame(cap):
-    """Read one frame and shrink it to FRAME_WIDTH for faster processing.
+    """Read one frame and resize it to FRAME_WIDTH.
 
     Returns the resized frame, or None if the camera stopped delivering frames.
     """
@@ -131,20 +137,31 @@ def capture_frame(cap):
 
 
 def detect_landmarks(gray, detector, predictor):
-    """Find the face and return its 68 landmarks as a (68, 2) NumPy array.
+    """Find the face and return (landmarks, face_box), or (None, None).
+
+    `landmarks` is a (68, 2) NumPy array of (x, y) points and `face_box` is a
+    dlib.rectangle, both in the coordinates of `gray`.
+
+    Speed choice: the face *detector* is the slow step, so it runs on a
+    smaller copy of the image (DETECT_WIDTH). The box it finds is scaled back
+    up and the landmark *predictor*, which is fast, runs on the full-size
+    image for accurate eye points.
 
     Choice: if several faces are visible we use the largest one, which is
     almost always the driver (closest to the camera).
-    Returns None if no face is found.
     """
+    scale = DETECT_WIDTH / gray.shape[1]
+    small = cv2.resize(gray, None, fx=scale, fy=scale)
     # The second argument (0) means "do not upsample the image": faster, and
     # enough for a face close to a webcam.
-    faces = detector(gray, 0)
+    faces = detector(small, 0)
     if len(faces) == 0:
-        return None
+        return None, None
     face = max(faces, key=lambda r: r.width() * r.height())
-    shape = predictor(gray, face)
-    return face_utils.shape_to_np(shape)  # convert to an array of (x, y) points
+    box = dlib.rectangle(int(face.left() / scale), int(face.top() / scale),
+                         int(face.right() / scale), int(face.bottom() / scale))
+    shape = predictor(gray, box)
+    return face_utils.shape_to_np(shape), box
 
 
 def eye_aspect_ratio(eye):
@@ -224,30 +241,104 @@ def update_alarm(sound, should_sound, alarm_on):
 # Display
 # --------------------------------------------------------------------------
 
-def draw_overlay(frame, ear, eye_state, counter, drowsy, left_eye=None, right_eye=None):
-    """Draw eye outlines, the live EAR, the eye state, and the alert message."""
+def put_label(frame, text, origin, colour, scale=0.6):
+    """Write text on a dark box so it stays readable on any background."""
+    (w, h), base = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
+    x, y = origin
+    cv2.rectangle(frame, (x - 4, y - h - 6), (x + w + 4, y + base + 2), BLACK, -1)
+    cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, colour, 2)
+
+
+def draw_overlay(frame, ear, eye_state, counter, drowsy,
+                 face_box=None, left_eye=None, right_eye=None):
+    """Draw the face box, eye landmarks, live EAR, frame counter and alert banner."""
     if ear is None:
-        cv2.putText(frame, "No face detected", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, YELLOW, 2)
+        put_label(frame, "No face detected", (10, 30), YELLOW)
         return
 
     colour = RED if eye_state == "CLOSED" else GREEN
 
-    # Outline each eye with the convex hull of its 6 landmarks.
+    # Face box from the detector.
+    cv2.rectangle(frame, (face_box.left(), face_box.top()),
+                  (face_box.right(), face_box.bottom()), WHITE, 1)
+
+    # Each eye: outline (convex hull) plus its 6 landmark points.
     for eye in (left_eye, right_eye):
         cv2.drawContours(frame, [cv2.convexHull(eye)], -1, colour, 1)
+        for (x, y) in eye:
+            cv2.circle(frame, (int(x), int(y)), 2, colour, -1)
 
-    cv2.putText(frame, f"EAR: {ear:.3f}", (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, colour, 2)
-    cv2.putText(frame, f"Eyes: {eye_state}", (10, 60),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, colour, 2)
-    # Showing the counter makes it easy to check the frame limit during testing.
-    cv2.putText(frame, f"Closed frames: {counter}/{CONSEC_FRAMES_LIMIT}", (10, 90),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, colour, 2)
+    put_label(frame, f"EAR: {ear:.3f}  (threshold {EAR_THRESHOLD:.2f})", (10, 30), colour)
+    put_label(frame, f"Eyes: {eye_state}", (10, 62), colour)
+    # The counter shows how close the eyes are to triggering the alarm.
+    put_label(frame, f"Closed frames: {counter}/{CONSEC_FRAMES_LIMIT}", (10, 94), colour)
 
     if drowsy:
-        cv2.putText(frame, "DROWSINESS ALERT!", (10, frame.shape[0] - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, RED, 3)
+        # Full-width red banner along the bottom of the frame.
+        h, w = frame.shape[:2]
+        cv2.rectangle(frame, (0, h - 60), (w, h), RED, -1)
+        text = "ALERT: DROWSINESS DETECTED"
+        (tw, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
+        cv2.putText(frame, text, ((w - tw) // 2, h - 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, WHITE, 2)
+
+
+# --------------------------------------------------------------------------
+# Recording (optional, --record)
+# --------------------------------------------------------------------------
+
+class VideoRecorder:
+    """Save the overlaid frames to an .mp4 file (video only, no audio).
+
+    A video file needs its frame rate fixed when it is created, but the real
+    rate depends on how fast this computer processes frames (often lower than
+    the camera's nominal 30 fps). So the first FPS_SAMPLE_FRAMES frames are
+    held in memory and timed, then the file is opened at the measured rate
+    and those frames are written first. This keeps playback at true speed.
+    """
+
+    def __init__(self, path):
+        self.path = path
+        self.buffer = []       # (timestamp, frame) pairs held until the rate is known
+        self.writer = None
+
+    def write(self, frame):
+        if self.writer is not None:
+            self.writer.write(frame)
+            return
+        self.buffer.append((time.perf_counter(), frame.copy()))
+        if len(self.buffer) >= FPS_SAMPLE_FRAMES:
+            self._open_and_flush()
+
+    def _open_and_flush(self):
+        elapsed = self.buffer[-1][0] - self.buffer[0][0]
+        fps = (len(self.buffer) - 1) / elapsed if elapsed > 0 else 15.0
+        fps = min(max(fps, 5.0), 60.0)  # guard against odd timings
+        h, w = self.buffer[0][1].shape[:2]
+        folder = os.path.dirname(os.path.abspath(self.path))
+        os.makedirs(folder, exist_ok=True)
+        # Choice: the 'mp4v' codec ships with OpenCV on all platforms, so no extra install is needed.
+        self.writer = cv2.VideoWriter(self.path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+        if not self.writer.isOpened():
+            sys.exit(f"[ERROR] Could not create the video file: {self.path}")
+        print(f"[INFO] Recording to {self.path} at {fps:.1f} fps")
+        for _, buffered in self.buffer:
+            self.writer.write(buffered)
+        self.buffer = []
+
+    def close(self):
+        if self.writer is None and len(self.buffer) > 1:
+            self._open_and_flush()  # short recording: use what we measured
+        if self.writer is not None:
+            self.writer.release()
+            print(f"[INFO] Saved recording: {self.path}")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Real-time driver drowsiness detection.")
+    parser.add_argument("--record", metavar="OUT.mp4",
+                        help="also save the video with overlays to this file (no audio)")
+    return parser.parse_args()
 
 
 # --------------------------------------------------------------------------
@@ -255,9 +346,11 @@ def draw_overlay(frame, ear, eye_state, counter, drowsy, left_eye=None, right_ey
 # --------------------------------------------------------------------------
 
 def main():
+    args = parse_args()
     detector, predictor = load_models(MODEL_FILE)
     alarm_sound = init_alarm(ALARM_SOUND_FILE)
     cap = open_camera(CAMERA_INDEX)
+    recorder = VideoRecorder(args.record) if args.record else None
 
     closed_counter = 0   # consecutive frames with eyes closed
     alarm_on = False     # is the alarm currently sounding?
@@ -272,7 +365,7 @@ def main():
 
             # Dlib's detector and predictor work on a single-channel image.
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            landmarks = detect_landmarks(gray, detector, predictor)
+            landmarks, face_box = detect_landmarks(gray, detector, predictor)
 
             if landmarks is None:
                 # Choice: with no face we cannot measure the eyes, so we reset
@@ -288,8 +381,10 @@ def main():
                 drowsy = is_drowsy(closed_counter)
                 alarm_on = update_alarm(alarm_sound, drowsy, alarm_on)
                 draw_overlay(frame, ear, eye_state, closed_counter, drowsy,
-                             left_eye, right_eye)
+                             face_box, left_eye, right_eye)
 
+            if recorder is not None:
+                recorder.write(frame)
             cv2.imshow("Driver Drowsiness Detection", frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
@@ -298,6 +393,8 @@ def main():
         update_alarm(alarm_sound, False, alarm_on)
         if pygame.mixer.get_init():
             pygame.mixer.quit()
+        if recorder is not None:
+            recorder.close()
         cap.release()
         cv2.destroyAllWindows()
         print("[INFO] Shut down cleanly.")

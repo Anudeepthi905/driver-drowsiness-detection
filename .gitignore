@@ -17,3 +17,8 @@ models/*.dat.bz2
 .ipynb_checkpoints/
 .DS_Store
 Thumbs.db
+
+# Demo recordings (raw clips can contain your face; only docs/demo.gif is committed)
+*.mp4
+*.avi
+*.mov

@@ -6,7 +6,7 @@ These notes explain how the system works, at a level you can adapt for an academ
 
 *Functions: `capture_frame`, `detect_landmarks`*
 
-Each webcam frame is resized to 450 px wide and converted to grayscale. Dlib's processing time grows with the number of pixels, so a smaller frame keeps the system real-time. The detector also only needs brightness patterns, not colour.
+Each webcam frame is resized to 640 px wide and converted to grayscale, because the detector only needs brightness patterns, not colour. Face detection is the slowest step and its cost grows with the number of pixels, so it runs on a smaller 400 px copy of the frame. The face box it finds is scaled back up, and the fast landmark predictor runs on the full 640 px image so the eye points stay accurate.
 
 Two pre-trained Dlib models are then applied:
 
@@ -94,7 +94,7 @@ Record the open and closed values in a small table for your report (subject, gla
 | Test | Action | Expected result |
 |---|---|---|
 | Blink rejection | Blink normally several times | Counter rises briefly (under ~10) and returns to 0; no alarm |
-| Trigger | Close your eyes and keep them closed | Counter climbs to the limit, then "DROWSINESS ALERT!" appears and the alarm sounds |
+| Trigger | Close your eyes and keep them closed | Counter climbs to the limit, then the red "ALERT: DROWSINESS DETECTED" banner appears and the alarm sounds |
 | Timing | Repeat the trigger test with a stopwatch | Delay ≈ `CONSEC_FRAMES_LIMIT` ÷ fps (about 2 s at 24 fps) |
 | Reset | Open your eyes while the alarm is sounding | Alarm stops immediately; counter returns to 0; alert disappears |
 | Re-trigger | Close your eyes again | Alarm sounds again after the full limit, not instantly |
