@@ -58,7 +58,7 @@ These constants are at the top of `drowsiness_detector.py`:
 | `EAR_THRESHOLD` | `0.25` | EAR below this counts as closed. Calibrate for your face ([how](docs/report_notes.md#4-testing-and-calibration)) |
 | `CONSEC_FRAMES_LIMIT` | `48` | Closed frames in a row before the alarm |
 | `CAMERA_INDEX` | `0` | Which webcam to use |
-| `ALARM_SOUND_FILE` | `sounds/alarm.wav` | Alarm sound |
+| `ALARM_SOUND_FILE` | `sounds/alarm.wav` | Alarm sound: a siren, then a spoken "take a break and get some fresh air" warning, looped |
 
 ## Limitations
 
