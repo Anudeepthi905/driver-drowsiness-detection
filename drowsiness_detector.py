@@ -22,6 +22,7 @@ Quit:    press 'q' in the video window.
 """
 
 import argparse
+import csv
 import os
 import sys
 import time
@@ -345,6 +346,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Real-time driver drowsiness detection.")
     parser.add_argument("--record", metavar="OUT.mp4",
                         help="also save the video with overlays to this file (no audio)")
+    parser.add_argument("--log", metavar="OUT.csv",
+                        help="save per-frame numbers (time, face found, EAR, eye state, counter) "
+                             "to a CSV file for calibration; no images are saved")
     return parser.parse_args()
 
 
@@ -358,6 +362,12 @@ def main():
     alarm_sound = init_alarm(ALARM_SOUND_FILE)
     cap = open_camera(CAMERA_INDEX)
     recorder = VideoRecorder(args.record) if args.record else None
+    log_file = None
+    if args.log:
+        log_file = open(args.log, "w", newline="")
+        log = csv.writer(log_file)
+        log.writerow(["t_s", "face_found", "ear", "eye_state", "closed_frames", "alarm_on"])
+    start = time.perf_counter()
 
     closed_counter = 0   # consecutive frames with eyes closed
     alarm_on = False     # is the alarm currently sounding?
@@ -374,6 +384,7 @@ def main():
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             landmarks, face_box = detect_landmarks(gray, detector, predictor)
 
+            ear, eye_state = None, None
             if landmarks is None:
                 # Choice: with no face we cannot measure the eyes, so we reset
                 # the counter and silence the alarm rather than guess.
@@ -390,6 +401,10 @@ def main():
                 draw_overlay(frame, ear, eye_state, closed_counter, drowsy,
                              face_box, left_eye, right_eye)
 
+            if log_file is not None:
+                log.writerow([f"{time.perf_counter() - start:.3f}", landmarks is not None,
+                              "" if ear is None else f"{ear:.4f}", eye_state or "",
+                              closed_counter, alarm_on])
             if recorder is not None:
                 recorder.write(frame)
             cv2.imshow("Driver Drowsiness Detection", frame)
@@ -402,6 +417,9 @@ def main():
             pygame.mixer.quit()
         if recorder is not None:
             recorder.close()
+        if log_file is not None:
+            log_file.close()
+            print(f"[INFO] Saved per-frame log: {args.log}")
         cap.release()
         cv2.destroyAllWindows()
         print("[INFO] Shut down cleanly.")
