@@ -6,7 +6,7 @@ These notes explain how the system works, at a level you can adapt for an academ
 
 *Functions: `capture_frame`, `detect_landmarks`*
 
-Each webcam frame is resized to 640 px wide and converted to grayscale, because the detector only needs brightness patterns, not colour. Face detection is the slowest step and its cost grows with the number of pixels, so it runs on a smaller 400 px copy of the frame. The face box it finds is scaled back up, and the fast landmark predictor runs on the full 640 px image so the eye points stay accurate.
+Each webcam frame is resized to 640 px wide and converted to grayscale, because the detector only needs brightness patterns, not colour. Face detection is the slowest step and its cost grows with the number of pixels, so it runs on a smaller 512 px copy of the frame. (An earlier 400 px copy lost the face in 31% of frames in a live test; 512 px finds faces down to about 100 px wide and takes about 14 ms per frame.) The face box it finds is scaled back up, and the fast landmark predictor runs on the full 640 px image so the eye points stay accurate.
 
 Two pre-trained Dlib models are then applied:
 
@@ -60,6 +60,8 @@ The system therefore uses the **duration** of the closure, not just its presence
 
 A normal blink pushes the counter to at most about 10 before an open frame resets it, so it never comes close to 48 and never triggers the alarm. A drowsy driver whose eyes stay shut keeps the counter climbing until it crosses the limit. In effect, this is a simple **temporal filter**: the alarm needs evidence that persists over time, which suppresses the short-lived false positives caused by blinks and by occasional single-frame landmark noise.
 
+**Brief face loss:** the face detector sometimes misses the face for a few frames. In a 64-second live test, 63 of 71 such gaps lasted 15 frames or fewer. If every gap reset the counter, a long closure could be split in two and never reach the limit. So a gap of up to `FACE_LOSS_GRACE_FRAMES` (15 frames, 0.5 s at 30 fps) leaves the counter and the alarm as they are. A longer gap resets them.
+
 **The trade-off:** a larger limit gives fewer false alarms but a slower response, and a smaller limit gives the opposite. Because the limit is counted in frames, the time it represents depends on the frame rate:
 
 $$
@@ -101,14 +103,14 @@ Record the open and closed values in a small table for your report (subject, gla
 | Reset | Open your eyes while the alarm is sounding | Alarm stops immediately; counter returns to 0; alert disappears |
 | Re-trigger | Close your eyes again | Alarm sounds again after the full limit, not instantly |
 | Limit change | Set `CONSEC_FRAMES_LIMIT = 15` and repeat | Alarm triggers noticeably sooner |
-| No face | Move out of the camera's view | "No face detected"; no alarm |
+| No face | Move out of the camera's view for more than 1 second | "No face detected"; the counter resets after 0.5 s; no alarm |
 | Missing model | Temporarily rename the `.dat` file | Program exits with download instructions |
 | Missing sound | Temporarily rename `alarm.wav` | Warning printed; visual alert still works |
 | Clean exit | Press `q` while the alarm is sounding | Sound stops, window closes, "Shut down cleanly." is printed |
 
 ## 5. Known limitations (useful for a report's discussion section)
 
-- The HOG face detector works best on near-frontal faces. Strong head turns or a head drooping out of view mean no face is found, and the counter is then reset rather than flagged.
+- The HOG face detector works best on near-frontal faces. Strong head turns or a head drooping out of view mean no face is found. After 0.5 s without a face, the counter is reset rather than flagged.
 - Very low light reduces landmark accuracy. An infrared camera would help in night driving.
 - The frame-based limit is tied to frame rate. On a slow machine, 48 frames takes longer in real seconds.
 - EAR only captures eye closure. Other drowsiness signs such as yawning or head nodding are not modelled.

@@ -51,7 +51,8 @@ ALARM_SOUND_FILE = os.path.join(BASE_DIR, "sounds", "alarm.wav")  # Sound looped
 
 MODEL_FILE = os.path.join(BASE_DIR, "models", "shape_predictor_68_face_landmarks.dat")  # Dlib 68-point landmark model (run scripts/download_model.py).
 FRAME_WIDTH = 640           # Width of the displayed (and recorded) frame; 640 px suits a demo GIF.
-DETECT_WIDTH = 400          # Face detection runs on a copy shrunk to this width: smaller is faster, but faces far from the camera may be missed.
+DETECT_WIDTH = 512          # Face detection runs on a copy shrunk to this width: smaller is faster, but faces far from the camera may be missed (400 px lost the face in 31% of frames in a live test).
+FACE_LOSS_GRACE_FRAMES = 15 # If the face is lost for up to this many frames (0.5 s at 30 fps), keep the closed-frame count instead of resetting it.
 FPS_SAMPLE_FRAMES = 30      # Recording only: frames used to measure the real frame rate, so the saved video plays at true speed.
 
 # Landmark index ranges for each eye in the 68-point model
@@ -256,6 +257,8 @@ def draw_overlay(frame, ear, eye_state, counter, drowsy,
     """Draw the face box, eye landmarks, live EAR, frame counter and alert banner."""
     if ear is None:
         put_label(frame, "No face detected", (10, 30), YELLOW)
+        if drowsy:
+            draw_alert_banner(frame)  # keep the alert visible through a brief face loss
         return
 
     colour = RED if eye_state == "CLOSED" else GREEN
@@ -278,13 +281,17 @@ def draw_overlay(frame, ear, eye_state, counter, drowsy,
     put_label(frame, f"Closed frames: {shown}/{CONSEC_FRAMES_LIMIT}", (10, 94), colour)
 
     if drowsy:
-        # Full-width red banner along the bottom of the frame.
-        h, w = frame.shape[:2]
-        cv2.rectangle(frame, (0, h - 60), (w, h), RED, -1)
-        text = "ALERT: DROWSINESS DETECTED"
-        (tw, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
-        cv2.putText(frame, text, ((w - tw) // 2, h - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, WHITE, 2)
+        draw_alert_banner(frame)
+
+
+def draw_alert_banner(frame):
+    """Full-width red banner along the bottom of the frame."""
+    h, w = frame.shape[:2]
+    cv2.rectangle(frame, (0, h - 60), (w, h), RED, -1)
+    text = "ALERT: DROWSINESS DETECTED"
+    (tw, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
+    cv2.putText(frame, text, ((w - tw) // 2, h - 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.9, WHITE, 2)
 
 
 # --------------------------------------------------------------------------
@@ -370,6 +377,7 @@ def main():
     start = time.perf_counter()
 
     closed_counter = 0   # consecutive frames with eyes closed
+    missed_frames = 0    # consecutive frames with no face found
     alarm_on = False     # is the alarm currently sounding?
 
     print("[INFO] Running. Press 'q' in the video window to quit.")
@@ -386,13 +394,19 @@ def main():
 
             ear, eye_state = None, None
             if landmarks is None:
-                # Choice: with no face we cannot measure the eyes, so we reset
-                # the counter and silence the alarm rather than guess.
-                # (Limitation: a head that drops out of view is not flagged.)
-                closed_counter = 0
-                alarm_on = update_alarm(alarm_sound, False, alarm_on)
-                draw_overlay(frame, None, None, 0, False)
+                # The detector often misses the face for a few frames at a time.
+                # A short gap keeps the count (and any alarm) as it is, so a
+                # long closure is not split in two by a flicker. After a longer
+                # gap we cannot measure the eyes, so we reset and silence the
+                # alarm rather than guess. (Limitation: a head that stays out of
+                # view is not flagged.)
+                missed_frames += 1
+                if missed_frames > FACE_LOSS_GRACE_FRAMES:
+                    closed_counter = 0
+                    alarm_on = update_alarm(alarm_sound, False, alarm_on)
+                draw_overlay(frame, None, None, closed_counter, alarm_on)
             else:
+                missed_frames = 0
                 ear, left_eye, right_eye = compute_ear(landmarks)
                 eye_state = classify_eye_state(ear)
                 closed_counter = update_closed_counter(closed_counter, eye_state)

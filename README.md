@@ -63,6 +63,6 @@ These constants are at the top of `drowsiness_detector.py`:
 ## Limitations
 
 - **Poor lighting and glasses glare:** both make the eye landmarks unreliable.
-- **Faces turned away:** faces turned more than about 30° are not detected, and the counter resets instead of raising the alarm.
+- **Faces turned away:** faces turned more than about 30° are not detected. Brief dropouts (up to 0.5 s) are bridged, but after that the counter resets instead of raising the alarm.
 - **Frame rate:** the limit is counted in frames, so on a slower computer the alarm takes longer.
 - **Fixed threshold:** one threshold does not suit every face.
