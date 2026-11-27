@@ -39,7 +39,7 @@ def main():
         print()
     except OSError as exc:
         sys.exit(f"\n[ERROR] Download failed ({exc}). Check your internet connection, "
-                 f"or download {URL} manually (see README).")
+                 f"or download {URL} manually, extract it, and put the .dat file in models/.")
 
     print("  decompressing...")
     # Stream in chunks so the whole file never has to sit in memory.

@@ -49,7 +49,7 @@ CAMERA_INDEX = 0            # Webcam to open: 0 is the built-in/default camera, 
 ALARM_SOUND_FILE = os.path.join(BASE_DIR, "sounds", "alarm.wav")  # Sound looped while the alarm is active.
 
 MODEL_FILE = os.path.join(BASE_DIR, "models", "shape_predictor_68_face_landmarks.dat")  # Dlib 68-point landmark model (run scripts/download_model.py).
-FRAME_WIDTH = 640           # Width of the displayed (and recorded) frame; 640 px suits a README demo GIF.
+FRAME_WIDTH = 640           # Width of the displayed (and recorded) frame; 640 px suits a demo GIF.
 DETECT_WIDTH = 400          # Face detection runs on a copy shrunk to this width: smaller is faster, but faces far from the camera may be missed.
 FPS_SAMPLE_FRAMES = 30      # Recording only: frames used to measure the real frame rate, so the saved video plays at true speed.
 
@@ -80,7 +80,8 @@ def load_models(model_path):
         sys.exit(
             f"[ERROR] Landmark model not found at:\n  {model_path}\n"
             "Download it with:  python scripts/download_model.py\n"
-            "(or see the README for the manual download steps)."
+            "(or download http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2,\n"
+            "extract it, and put the .dat file in the 'models' folder)."
         )
     detector = dlib.get_frontal_face_detector()    # HOG + linear SVM face detector (fast on a CPU)
     predictor = dlib.shape_predictor(model_path)   # Regression-tree model that places 68 landmarks
