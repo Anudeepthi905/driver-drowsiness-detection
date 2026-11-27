@@ -39,7 +39,7 @@ where ‖·‖ is the Euclidean (straight-line) distance between two points.
 - The **numerator** adds the two **vertical** distances between the upper and lower eyelids, which is how open the eye is.
 - The **denominator** is the **horizontal** width of the eye. It is multiplied by 2 because the numerator contains two vertical distances, so the ratio compares one average height with one width.
 
-**Why it drops when the eye closes:** as the eyelid comes down, p2 moves towards p6 and p3 towards p5, so the numerator shrinks towards zero. The eye corners do not move, so the denominator stays roughly constant. EAR therefore falls from a typical open value of about 0.25–0.35 to a closed value of about 0.05–0.15.
+**Why it drops when the eye closes:** as the eyelid comes down, p2 moves towards p6 and p3 towards p5, so the numerator shrinks towards zero. The eye corners do not move, so the denominator stays roughly constant. EAR therefore falls sharply as the eye closes. Soukupová and Čech (2016) measured an average EAR of 0.4 ± 0.1 for open eyes and 0.05 ± 0.05 for closed or closing eyes. Those figures come from other landmark detectors (Chehra and Intraface), so values from Dlib's model on your own face may differ. Calibrate before relying on the default threshold (section 4.1).
 
 **Why a ratio instead of raw distances:** if the driver leans towards the camera, every distance in pixels gets larger, but the ratio stays the same. Dividing by the eye width makes EAR independent of the face's distance from the camera and of image resolution. It is also fairly robust to small head rotations.
 
@@ -49,7 +49,7 @@ The EAR of the two eyes is averaged, because both eyes close together and averag
 
 *Functions: `classify_eye_state`, `update_closed_counter`, `is_drowsy`, `update_alarm`*
 
-A single frame with a low EAR does not mean the driver is drowsy. People blink 15–20 times a minute, and each blink lasts only about 100–400 ms. At a typical webcam rate of 24–30 fps, a blink covers only about **3–10 frames**.
+A single frame with a low EAR does not mean the driver is drowsy. A blink lasts only about 100–400 ms (Soukupová and Čech, 2016). At a typical webcam rate of 24–30 fps, a blink covers only about **3–10 frames**.
 
 The system therefore uses the **duration** of the closure, not just its presence:
 
@@ -67,6 +67,8 @@ $$
 $$
 
 `update_alarm` only starts the sound when the alarm *becomes* active and only stops it when it *becomes* inactive. This means the sound is not restarted on every frame.
+
+**Relation to the paper:** the threshold-plus-counter rule is this project's own design. Soukupová and Čech (2016) detect blinks with a linear SVM trained on a 13-frame window of EAR values (the frame plus 6 on each side, at 30 fps), and use a plain EAR threshold of 0.2 only as a baseline. The simpler rule was chosen here because it needs no labelled training data, and the goal is sustained closure, not individual blinks.
 
 ## 4. Testing and calibration
 

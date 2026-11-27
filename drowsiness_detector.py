@@ -271,7 +271,9 @@ def draw_overlay(frame, ear, eye_state, counter, drowsy,
     put_label(frame, f"EAR: {ear:.3f}  (threshold {EAR_THRESHOLD:.2f})", (10, 30), colour)
     put_label(frame, f"Eyes: {eye_state}", (10, 62), colour)
     # The counter shows how close the eyes are to triggering the alarm.
-    put_label(frame, f"Closed frames: {counter}/{CONSEC_FRAMES_LIMIT}", (10, 94), colour)
+    # It is capped at the limit for display (e.g. 48/48, not 56/48); the alarm logic uses the real count.
+    shown = min(counter, CONSEC_FRAMES_LIMIT)
+    put_label(frame, f"Closed frames: {shown}/{CONSEC_FRAMES_LIMIT}", (10, 94), colour)
 
     if drowsy:
         # Full-width red banner along the bottom of the frame.
@@ -327,8 +329,12 @@ class VideoRecorder:
         self.buffer = []
 
     def close(self):
-        if self.writer is None and len(self.buffer) > 1:
-            self._open_and_flush()  # short recording: use what we measured
+        if self.writer is None and self.buffer:
+            # Short recording: use what we measured (a single frame falls back to 15 fps).
+            self._open_and_flush()
+        if self.writer is None:
+            print("[WARNING] No frames were captured, so no recording was saved.")
+            return
         if self.writer is not None:
             self.writer.release()
             print(f"[INFO] Saved recording: {self.path}")

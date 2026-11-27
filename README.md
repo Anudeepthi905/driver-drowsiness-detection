@@ -18,11 +18,13 @@ webcam frame → face detection → 68 facial landmarks → eye aspect ratio →
 
    $$\text{EAR} = \frac{\lVert p_2 - p_6 \rVert + \lVert p_3 - p_5 \rVert}{2\,\lVert p_1 - p_4 \rVert}$$
 
-   This is eye height divided by eye width. It stays around 0.25–0.35 when the eye is open and drops towards 0.05–0.15 when the eyelids close, because the height shrinks while the width stays the same. Since it is a ratio, it doesn't change when you move closer to or further from the camera. The two eyes are averaged.
+   This is eye height divided by eye width. The original paper measured about 0.4 ± 0.1 for open eyes and 0.05 ± 0.05 for closed ones, with other landmark detectors. It drops when the eyelids close because the height shrinks while the width stays the same. Since it is a ratio, it doesn't change when you move closer to or further from the camera. The two eyes are averaged.
 4. **Closed-frame counter.** A frame counts as "closed" when the EAR is below `EAR_THRESHOLD` (0.25). The counter goes up by 1 for every closed frame in a row, and any open frame resets it to 0.
 5. **Alarm.** When the counter reaches `CONSEC_FRAMES_LIMIT` (48 frames, about 2 seconds), a looping alarm sounds and a red banner appears. Both stop on the first open-eye frame.
 
-**Why a frame threshold instead of reacting to a single closed frame?** People blink 15–20 times a minute. Each blink lasts about 100–400 ms, which is only 3–10 frames on a webcam. Reacting to every low-EAR frame would sound the alarm on every blink. With a 48-frame threshold, a blink resets the counter long before it reaches the limit. Only a sustained closure, the sign of drowsiness, gets there. The same rule ignores one-off landmark glitches from a single bad frame.
+**Why a frame threshold instead of reacting to a single closed frame?** A blink lasts about 100–400 ms (Soukupová and Čech, 2016), which is only 3–10 frames on a webcam. Reacting to every low-EAR frame would sound the alarm on every blink. With a 48-frame threshold, a blink resets the counter long before it reaches the limit. Only a sustained closure, the sign of drowsiness, gets there. The same rule ignores one-off landmark glitches from a single bad frame.
+
+**Relation to the paper.** The EAR formula comes from Soukupová and Čech (2016). The decision rule does not. The paper detects blinks with a linear SVM trained on a 13-frame window of EAR values, and uses a plain 0.2 threshold only as a baseline to compare against. This project uses the simpler threshold-plus-counter rule because it needs no labelled training data, and its goal is sustained closure rather than individual blinks.
 
 Full derivation, testing and calibration notes: [docs/report_notes.md](docs/report_notes.md).
 
@@ -47,7 +49,7 @@ pip install -r requirements.txt
 **About dlib:** pip compiles dlib from source, which needs [CMake](https://cmake.org/download/) and a C++ compiler. On Windows that compiler is "Visual Studio Build Tools" with the "Desktop development with C++" workload. If that's a hassle, Anaconda provides a precompiled dlib:
 
 ```bash
-conda create -n drowsy -c conda-forge --override-channels python=3.11 dlib=19.24
+conda create -n drowsy -c conda-forge --override-channels python=3.11 dlib=19.24.6
 conda activate drowsy
 pip install opencv-python==4.10.0.84 imutils==0.5.4 pygame==2.6.1 scipy==1.14.1 numpy==1.26.4
 ```
@@ -102,7 +104,7 @@ To calibrate `EAR_THRESHOLD` for your own face and lighting, see [docs/report_no
    python drowsiness_detector.py --record demo.mp4
    ```
 
-   The first second is used to measure your computer's real frame rate, so the video plays back at true speed.
+   The first 30 frames (about 1–2 seconds, depending on your computer) are used to measure the real frame rate, so the video plays back at true speed.
 2. **Convert** the best 8–10 seconds to a GIF:
 
    ```bash
